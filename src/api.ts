@@ -1,3 +1,4 @@
+
 import type { Category, Expense, PaymentMethod, User } from './types'
 
 const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim()
@@ -10,8 +11,6 @@ type RequestOptions = {
   method?: string
   jsonBody?: unknown
   rawBody?: string
-  needsCsrf?: boolean
-  skipCsrf?: boolean
 }
 
 export class ApiError extends Error {
@@ -30,35 +29,46 @@ function asObject(value: unknown): ApiObject | null {
 function messageFrom(payload: unknown, fallback: string): string {
   const value = asObject(payload)
   if (value) {
+    // El backend devuelve { message, fieldErrors: { campo: "detalle" } } en los 400 de validación.
+    const fields = asObject(value.fieldErrors)
+    const details = fields
+      ? Object.values(fields).filter((item): item is string => typeof item === 'string')
+      : []
     for (const key of ['message', 'error', 'detail', 'title']) {
-      if (typeof value[key] === 'string' && value[key]) return value[key] as string
+      const text = value[key]
+      if (typeof text === 'string' && text) return details.length ? `${text}: ${details.join(' · ')}` : text
     }
   }
   return typeof payload === 'string' && payload.trim() ? payload : fallback
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  if (options.needsCsrf && !csrfToken) await refreshCsrfToken()
+  const method = (options.method ?? 'GET').toUpperCase()
+  const mutates = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS'
+
+  // El backend rota la cookie CSRF en cada petición autenticada, así que un token
+  // solo sirve para UNA petición: se pide justo antes de cada petición que modifica datos.
+  if (mutates) await refreshCsrfToken()
 
   const headers = new Headers({ Accept: 'application/json' })
-  const body = options.jsonBody !== undefined || options.rawBody !== undefined
-  if (options.jsonBody !== undefined) headers.set('Content-Type', 'application/json')
-  if (options.rawBody !== undefined) headers.set('Content-Type', 'application/json')
-  if (!options.skipCsrf && csrfToken) headers.set('X-CSRF-TOKEN', csrfToken)
+  const hasBody = options.jsonBody !== undefined || options.rawBody !== undefined
+  if (hasBody) headers.set('Content-Type', 'application/json')
+  if (mutates && csrfToken) headers.set('X-CSRF-TOKEN', csrfToken)
 
   let response: Response
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
-      method: options.method ?? 'GET',
+      method,
       headers,
       credentials: 'include',
-      ...(body
+      ...(hasBody
         ? { body: options.rawBody !== undefined ? options.rawBody : JSON.stringify(options.jsonBody) }
         : {}),
     })
-  } catch {
+  } catch (error) {
+    console.error(`${method} ${path} falló:`, error)
     throw new ApiError(
-      `No se pudo conectar con ${API_BASE_URL}. Comprueba que la API esté disponible y permita solicitudes CORS con credenciales.`,
+      `No se pudo conectar con ${API_BASE_URL}. Verifica que la API esté en línea (el detalle está en la consola del navegador).`,
     )
   }
 
@@ -80,10 +90,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 async function refreshCsrfToken(): Promise<void> {
-  const payload = await request<unknown>('/api/v1/auth/csrf', { skipCsrf: true })
-  const outer = asObject(payload)
-  const nested = asObject(outer?.data)
-  const token = outer?.token ?? nested?.token
+  const payload = await request<unknown>('/api/v1/auth/csrf')
+  const token = asObject(payload)?.token
   if (typeof token !== 'string' || !token) {
     throw new ApiError('La respuesta de /auth/csrf no incluyó un token CSRF válido.')
   }
@@ -129,19 +137,16 @@ function normalizeUser(payload: unknown): User {
   }
 }
 
+// SpentResponse del backend: { id, cost, description, category, paymentMethod, spentDate, userId }
+// category y paymentMethod llegan como NOMBRE (string), sin id.
 function normalizeExpense(value: ApiObject): Expense {
-  const payment = asObject(value.paymentMethod)
-  const category = value.category
-  const categoryName = typeof category === 'string'
-    ? category
-    : stringValue(asObject(category)?.name)
   return {
-    id: stringValue(value.id ?? value.spentId ?? value.expenseId),
+    id: stringValue(value.id),
+    cost: Number(value.cost) || 0,
     description: stringValue(value.description, 'Gasto sin descripción'),
-    category: categoryName,
-    paymentMethodId: stringValue(value.paymentMethodId ?? payment?.id ?? value.payMethodId),
-    paymentMethodName: stringValue(payment?.name ?? value.paymentMethodName),
-    spentDate: stringValue(value.spentDate ?? value.date ?? value.createdAt),
+    category: stringValue(value.category),
+    paymentMethodName: stringValue(value.paymentMethod),
+    spentDate: stringValue(value.spentDate),
   }
 }
 
@@ -159,33 +164,34 @@ function normalizePaymentMethod(value: ApiObject): PaymentMethod {
   }
 }
 
+/* ---------- Autenticación ---------- */
+
 export async function getCurrentUser(): Promise<User> {
   return normalizeUser(await request('/api/v1/auth/me'))
 }
 
 export async function login(email: string, password: string): Promise<User> {
-  await refreshCsrfToken()
-  await request('/api/v1/auth/login', {
-    method: 'POST',
-    jsonBody: { email, password },
-    needsCsrf: true,
-  })
-  await refreshCsrfToken()
+  await request('/api/v1/auth/login', { method: 'POST', jsonBody: { email, password } })
   return getCurrentUser()
 }
 
 export async function register(fullName: string, email: string, password: string): Promise<void> {
-  await refreshCsrfToken()
-  await request('/api/v1/auth/register', {
-    method: 'POST',
-    jsonBody: { fullName, email, password },
-    needsCsrf: true,
-  })
+  await request('/api/v1/auth/register', { method: 'POST', jsonBody: { fullName, email, password } })
 }
 
 export async function logout(): Promise<void> {
-  await request('/api/v1/auth/logout', { method: 'POST', needsCsrf: true })
+  await request('/api/v1/auth/logout', { method: 'POST' })
   csrfToken = ''
+}
+
+/* ---------- Gastos ---------- */
+
+export interface ExpensePayload {
+  cost: number
+  description: string
+  categoryId: number
+  paymentMethodId: number
+  spentDate: string
 }
 
 export async function getExpenses(userId: string): Promise<Expense[]> {
@@ -193,56 +199,41 @@ export async function getExpenses(userId: string): Promise<Expense[]> {
   return collectionFrom(payload, ['spents', 'expenses', 'spent']).map(normalizeExpense)
 }
 
-export async function createExpense(data: {
-  description: string
-  category: string
-  paymentMethodId: number
-  spentDate: string
-  userId: string
-}): Promise<void> {
-  await request('/api/v1/spent/create', { method: 'POST', jsonBody: data, needsCsrf: true })
+// SpentRequest: { cost, description, categoryId, paymentMethodId, spentDate, userId }
+export async function createExpense(data: ExpensePayload & { userId: string }): Promise<void> {
+  await request('/api/v1/spent/create', { method: 'POST', jsonBody: data })
 }
 
-export async function updateExpense(id: string, data: Omit<Parameters<typeof createExpense>[0], 'userId'>): Promise<void> {
-  await request(`/api/v1/spent/edit/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    jsonBody: { id: /^\\d+$/.test(id) ? Number(id) : id, ...data },
-    needsCsrf: true,
-  })
+// SpentRequestEdit: igual que SpentRequest, sin userId
+export async function updateExpense(id: string, data: ExpensePayload): Promise<void> {
+  await request(`/api/v1/spent/edit/${encodeURIComponent(id)}`, { method: 'PUT', jsonBody: data })
 }
 
 export async function deleteExpense(id: string): Promise<void> {
-  await request(`/api/v1/spent/delete/${encodeURIComponent(id)}`, { method: 'DELETE', needsCsrf: true })
+  await request(`/api/v1/spent/delete/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+/* ---------- Categorías ---------- */
+
 export async function getCategories(userId: string): Promise<Category[]> {
-  const payload = await request<unknown>(`/api/v1/spent/category/get/${encodeURIComponent(userId)}`)
+  const payload = await request<unknown>(`/api/v1/category/get/${encodeURIComponent(userId)}`)
   return collectionFrom(payload, ['categories', 'category']).map(normalizeCategory)
 }
 
 export async function createCategory(name: string, userId: string): Promise<void> {
-  await request('/api/v1/spent/category/create', {
-    method: 'POST',
-    jsonBody: { name, userId },
-    needsCsrf: true,
-  })
+  await request('/api/v1/category/create', { method: 'POST', jsonBody: { name, userId } })
 }
 
-export async function updateCategory(id: string, name: string, userId: string): Promise<void> {
-  await request(`/api/v1/spent/category/edit/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    jsonBody: { name, userId },
-    needsCsrf: true,
-  })
+// El backend recibe el nombre como cuerpo crudo (@RequestBody String name).
+export async function updateCategory(id: string, name: string): Promise<void> {
+  await request(`/api/v1/category/edit/${encodeURIComponent(id)}`, { method: 'PUT', rawBody: name })
 }
 
-export async function deleteCategory(category: Category, userId: string): Promise<void> {
-  await request(`/api/v1/spent/category/delete/${encodeURIComponent(category.id)}`, {
-    method: 'DELETE',
-    jsonBody: { name: category.name, userId },
-    needsCsrf: true,
-  })
+export async function deleteCategory(id: string): Promise<void> {
+  await request(`/api/v1/category/delete/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+/* ---------- Métodos de pago ---------- */
 
 export async function getPaymentMethods(userId: string): Promise<PaymentMethod[]> {
   const payload = await request<unknown>(`/api/v1/payment_method/get/${encodeURIComponent(userId)}`)
@@ -250,25 +241,14 @@ export async function getPaymentMethods(userId: string): Promise<PaymentMethod[]
 }
 
 export async function createPaymentMethod(name: string, userId: string): Promise<void> {
-  await request('/api/v1/payment_method/create', {
-    method: 'POST',
-    jsonBody: { name, userId },
-    needsCsrf: true,
-  })
+  await request('/api/v1/payment_method/create', { method: 'POST', jsonBody: { name, userId } })
 }
 
+// El backend recibe el nombre como cuerpo crudo (@RequestBody String name).
 export async function updatePaymentMethod(id: string, name: string): Promise<void> {
-  await request(`/api/v1/payment_method/edit/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    rawBody: name,
-    needsCsrf: true,
-  })
+  await request(`/api/v1/payment_method/edit/${encodeURIComponent(id)}`, { method: 'PUT', rawBody: name })
 }
 
-export async function deletePaymentMethod(id: string, name: string): Promise<void> {
-  await request(`/api/v1/payment_method/delete/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    rawBody: name,
-    needsCsrf: true,
-  })
+export async function deletePaymentMethod(id: string): Promise<void> {
+  await request(`/api/v1/payment_method/delete/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

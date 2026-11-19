@@ -1,3 +1,4 @@
+
 export interface User {
   id: string
   fullName: string
@@ -6,9 +7,12 @@ export interface User {
 
 export interface Expense {
   id: string
+  cost: number
   description: string
+  /** Nombre de la categoría: el backend no devuelve su id. */
   category: string
-  paymentMethodId: string
+  /** El backend tampoco devuelve este id; se resuelve por nombre contra la lista de métodos. */
+  paymentMethodId?: string
   paymentMethodName: string
   spentDate: string
 }

@@ -136,26 +136,13 @@ async function runAction(action: () => Promise<void>, successMessage: string) {
   }
 }
 
-async function saveExpense(data: { id?: string; description: string; category: string; paymentMethodId: number; spentDate: string }) {
+async function saveExpense(data: { id?: string; cost: number; description: string; categoryId: number; paymentMethodId: number; spentDate: string }) {
   if (!user.value) return
+  const { id, ...payload } = data
   await runAction(async () => {
-    if (data.id) {
-      await updateExpense(data.id, {
-        description: data.description,
-        category: data.category,
-        paymentMethodId: data.paymentMethodId,
-        spentDate: data.spentDate,
-      })
-    } else {
-      await createExpense({
-        description: data.description,
-        category: data.category,
-        paymentMethodId: data.paymentMethodId,
-        spentDate: data.spentDate,
-        userId: user.value!.id,
-      })
-    }
-  }, data.id ? 'Gasto actualizado.' : 'Gasto registrado.')
+    if (id) await updateExpense(id, payload)
+    else await createExpense({ ...payload, userId: user.value!.id })
+  }, id ? 'Gasto actualizado.' : 'Gasto registrado.')
 }
 
 async function removeExpense(expense: Expense) {
@@ -167,7 +154,7 @@ async function saveResource(item: { type: 'category' | 'paymentMethod'; id?: str
   if (!user.value) return
   await runAction(async () => {
     if (item.type === 'category') {
-      if (item.id) await updateCategory(item.id, item.name, user.value!.id)
+      if (item.id) await updateCategory(item.id, item.name)
       else await createCategory(item.name, user.value!.id)
     } else if (item.id) {
       await updatePaymentMethod(item.id, item.name)
@@ -182,8 +169,8 @@ async function removeResource(item: { type: 'category' | 'paymentMethod'; resour
   if (!window.confirm(`¿Eliminar ${label} “${item.resource.name}”?`)) return
   if (!user.value) return
   await runAction(async () => {
-    if (item.type === 'category') await deleteCategory(item.resource as Category, user.value!.id)
-    else await deletePaymentMethod(item.resource.id, item.resource.name)
+    if (item.type === 'category') await deleteCategory(item.resource.id)
+    else await deletePaymentMethod(item.resource.id)
   }, 'Elemento eliminado.')
 }
 
@@ -200,22 +187,42 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-if="checkingSession" class="session-loader" role="status"><span class="loading-orb"></span><span>Preparando tu espacio…</span></div>
-  <AuthView v-else-if="!user" :busy="busy" :api-url="API_BASE_URL" :error-message="authError" @submit="onLogin" @toggle-mode="authError = ''" />
+  <div v-if="checkingSession" class="session-loader" role="status"><span class="loading-orb"></span><span>Preparando tu
+      espacio…</span></div>
+  <AuthView v-else-if="!user" :busy="busy" :api-url="API_BASE_URL" :error-message="authError" @submit="onLogin"
+    @toggle-mode="authError = ''" />
   <div v-else class="app-shell">
-    <AppSidebar :active="activeSection" :full-name="user.fullName" :email="user.email" :busy="busy" @navigate="activeSection = $event" @logout="onLogout" />
+    <AppSidebar :active="activeSection" :full-name="user.fullName" :email="user.email" :busy="busy"
+      @navigate="activeSection = $event" @logout="onLogout" />
     <main class="main-area">
       <header class="topbar">
-        <div class="topbar-context"><span class="topbar-brand">GASTO CLARO</span><span class="topbar-divider">/</span><span>FINANZAS PERSONALES</span></div>
-        <div class="topbar-actions"><span class="session-badge"><ShieldCheck :size="14" aria-hidden="true" /> Sesión segura</span><button class="button button-quiet topbar-logout" type="button" :disabled="busy" @click="onLogout"><LogOut :size="16" aria-hidden="true" /> Salir</button></div>
+        <div class="topbar-context"><span class="topbar-brand">GASTO CLARO</span><span
+            class="topbar-divider">/</span><span>FINANZAS PERSONALES</span></div>
+        <div class="topbar-actions"><span class="session-badge">
+            <ShieldCheck :size="14" aria-hidden="true" /> Sesión segura
+          </span><button class="button button-quiet topbar-logout" type="button" :disabled="busy" @click="onLogout">
+            <LogOut :size="16" aria-hidden="true" /> Salir
+          </button></div>
       </header>
 
-      <div v-if="dataError" class="inline-alert" role="alert"><span>{{ dataError }}</span><button class="icon-button" type="button" aria-label="Reintentar carga" :disabled="busy" @click="loadCollections"><RefreshCw :size="15" aria-hidden="true" /></button></div>
-      <div v-if="feedback" class="feedback-bar" :class="{ 'feedback-error': feedbackIsError }" :role="feedbackIsError ? 'alert' : 'status'"><span>{{ feedback }}</span><button class="icon-button" type="button" aria-label="Cerrar aviso" @click="feedback = ''"><X :size="15" aria-hidden="true" /></button></div>
+      <div v-if="dataError" class="inline-alert" role="alert"><span>{{ dataError }}</span><button class="icon-button"
+          type="button" aria-label="Reintentar carga" :disabled="busy" @click="loadCollections">
+          <RefreshCw :size="15" aria-hidden="true" />
+        </button></div>
+      <div v-if="feedback" class="feedback-bar" :class="{ 'feedback-error': feedbackIsError }"
+        :role="feedbackIsError ? 'alert' : 'status'"><span>{{ feedback }}</span><button class="icon-button"
+          type="button" aria-label="Cerrar aviso" @click="feedback = ''">
+          <X :size="15" aria-hidden="true" />
+        </button></div>
 
-      <OverviewView v-if="activeSection === 'overview'" :expenses="expenses" :categories="categories" :payment-methods="paymentMethods" :user-name="user.fullName.split(' ')[0]" :loading="busy" @go-to-expenses="activeSection = 'expenses'" @add-expense="activeSection = 'expenses'" />
-      <ExpensesView v-else-if="activeSection === 'expenses'" :expenses="expenses" :categories="categories" :payment-methods="paymentMethods" :loading="busy" :busy="busy" :success-version="successVersion" @save="saveExpense" @remove="removeExpense" @go-to-settings="activeSection = 'settings'" />
-      <ResourcesView v-else :categories="categories" :payment-methods="paymentMethods" :busy="busy" :success-version="successVersion" @save="saveResource" @remove="removeResource" />
+      <OverviewView v-if="activeSection === 'overview'" :expenses="expenses" :categories="categories"
+        :payment-methods="paymentMethods" :user-name="user.fullName.split(' ')[0]" :loading="busy"
+        @go-to-expenses="activeSection = 'expenses'" @add-expense="activeSection = 'expenses'" />
+      <ExpensesView v-else-if="activeSection === 'expenses'" :expenses="expenses" :categories="categories"
+        :payment-methods="paymentMethods" :loading="busy" :busy="busy" :success-version="successVersion"
+        @save="saveExpense" @remove="removeExpense" @go-to-settings="activeSection = 'settings'" />
+      <ResourcesView v-else :categories="categories" :payment-methods="paymentMethods" :busy="busy"
+        :success-version="successVersion" @save="saveResource" @remove="removeResource" />
     </main>
   </div>
 </template>
