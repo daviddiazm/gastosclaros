@@ -206,7 +206,7 @@ export async function createExpense(data: {
 export async function updateExpense(id: string, data: Omit<Parameters<typeof createExpense>[0], 'userId'>): Promise<void> {
   await request(`/api/v1/spent/edit/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    jsonBody: { id: /^\\d+$/.test(id) ? Number(id) : id, ...data },
+    jsonBody: { id: /^\d+$/.test(id) ? Number(id) : id, ...data },
     needsCsrf: true,
   })
 }
