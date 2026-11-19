@@ -1,5 +1,5 @@
 
-import type { Category, Expense, PaymentMethod, User } from './types'
+import type { Category, Expense, NarrativeReport, PaymentMethod, User } from './types'
 
 const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 export const API_BASE_URL = (configuredUrl || 'http://localhost:8080').replace(/\/+$/, '')
@@ -211,6 +211,19 @@ export async function updateExpense(id: string, data: ExpensePayload): Promise<v
 
 export async function deleteExpense(id: string): Promise<void> {
   await request(`/api/v1/spent/delete/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+/* ---------- Reportes ---------- */
+
+export async function getNarrativeReport(): Promise<NarrativeReport> {
+  const payload = await request<unknown>('/api/v1/report/narrative')
+  const value = asObject(unwrap(payload)) ?? {}
+  return {
+    from: stringValue(value.from),
+    to: stringValue(value.to),
+    total: Number(value.total) || 0,
+    text: stringValue(value.text),
+  }
 }
 
 /* ---------- Categorías ---------- */

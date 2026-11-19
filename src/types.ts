@@ -1,4 +1,3 @@
-
 export interface User {
   id: string
   fullName: string
@@ -25,6 +24,13 @@ export interface Category {
 export interface PaymentMethod {
   id: string
   name: string
+}
+
+export interface NarrativeReport {
+  from: string
+  to: string
+  total: number
+  text: string
 }
 
 export type AppSection = 'overview' | 'expenses' | 'settings'

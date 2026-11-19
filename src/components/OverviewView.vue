@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { ArrowUpRight, CalendarDays, ChevronRight, CirclePlus, ReceiptText, Sparkles } from 'lucide-vue-next'
-import type { Category, Expense, PaymentMethod } from '../types'
+import type { Category, Expense, NarrativeReport, PaymentMethod } from '../types'
 
 const props = defineProps<{
   expenses: Expense[]
   categories: Category[]
   paymentMethods: PaymentMethod[]
+  narrative: NarrativeReport | null
   userName: string
   loading: boolean
 }>()
@@ -26,11 +28,23 @@ const commonCategory = () => {
   })
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Aún sin datos'
 }
+
+const narrativeParagraphs = computed(() =>
+  props.narrative?.text
+    ? props.narrative.text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean)
+    : [],
+)
+
 function displayDate(value: string) {
   if (!value) return 'Sin fecha'
   const date = new Date(`${value.slice(0, 10)}T12:00:00`)
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
 }
+
+function money(value: number) {
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value)
+}
+
 function methodName(expense: Expense) {
   return expense.paymentMethodName || props.paymentMethods.find((method) => method.id === expense.paymentMethodId)?.name || 'Método de pago'
 }
@@ -47,7 +61,37 @@ function methodName(expense: Expense) {
       <button class="button button-primary" type="button" @click="emit('addExpense')"><CirclePlus :size="17" aria-hidden="true" /> Registrar gasto</button>
     </div>
 
-    <div class="insight-banner">
+    <article v-if="props.narrative?.text" class="content-card narrative-card">
+      <div class="narrative-header">
+        <div class="narrative-title-group">
+          <span class="insight-icon"><Sparkles :size="18" aria-hidden="true" /></span>
+          <div>
+            <p class="eyebrow">ANÁLISIS DEL PERIODO</p>
+            <h2>
+              {{ displayDate(props.narrative.from) }} – {{ displayDate(props.narrative.to) }}
+            </h2>
+          </div>
+        </div>
+        <div class="narrative-total">
+          <span>Total del periodo</span>
+          <strong>{{ money(props.narrative.total) }}</strong>
+        </div>
+      </div>
+
+      <div class="narrative-body">
+        <p v-for="(paragraph, index) in narrativeParagraphs" :key="index">
+          {{ paragraph }}
+        </p>
+      </div>
+
+      <div class="narrative-footer">
+        <button class="text-link" type="button" @click="emit('goToExpenses')">
+          Ver movimientos <ArrowUpRight :size="15" aria-hidden="true" />
+        </button>
+      </div>
+    </article>
+
+    <div v-else class="insight-banner">
       <div class="insight-icon"><Sparkles :size="18" aria-hidden="true" /></div>
       <div class="insight-copy"><strong>La claridad empieza con cada registro.</strong><p>Agrega tus gastos y encuentra patrones en tu día a día.</p></div>
       <button class="text-link" type="button" @click="emit('goToExpenses')">Ver movimientos <ArrowUpRight :size="15" aria-hidden="true" /></button>

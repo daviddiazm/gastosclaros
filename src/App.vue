@@ -18,6 +18,7 @@ import {
   getCategories,
   getCurrentUser,
   getExpenses,
+  getNarrativeReport,
   getPaymentMethods,
   login,
   logout,
@@ -26,12 +27,13 @@ import {
   updateExpense,
   updatePaymentMethod,
 } from './api'
-import type { AppSection, Category, Expense, PaymentMethod, User } from './types'
+import type { AppSection, Category, Expense, NarrativeReport, PaymentMethod, User } from './types'
 
 const user = ref<User | null>(null)
 const expenses = ref<Expense[]>([])
 const categories = ref<Category[]>([])
 const paymentMethods = ref<PaymentMethod[]>([])
+const narrativeReport = ref<NarrativeReport | null>(null)
 const activeSection = ref<AppSection>('overview')
 const checkingSession = ref(true)
 const busy = ref(false)
@@ -50,13 +52,18 @@ function notify(message: string, isError = false) {
   feedbackIsError.value = isError
 }
 
+function resetSessionState() {
+  user.value = null
+  expenses.value = []
+  categories.value = []
+  paymentMethods.value = []
+  narrativeReport.value = null
+  activeSection.value = 'overview'
+}
+
 function handleExpiredSession(error: unknown) {
   if (error instanceof ApiError && error.status === 401) {
-    user.value = null
-    expenses.value = []
-    categories.value = []
-    paymentMethods.value = []
-    activeSection.value = 'overview'
+    resetSessionState()
     authError.value = 'Tu sesión terminó. Inicia sesión de nuevo para continuar.'
     return true
   }
@@ -70,10 +77,11 @@ async function loadCollections() {
     return
   }
   dataError.value = ''
-  const [expenseResult, categoryResult, methodResult] = await Promise.allSettled([
+  const [expenseResult, categoryResult, methodResult, narrativeResult] = await Promise.allSettled([
     getExpenses(user.value.id),
     getCategories(user.value.id),
     getPaymentMethods(user.value.id),
+    getNarrativeReport(),
   ])
 
   const failures: string[] = []
@@ -83,6 +91,9 @@ async function loadCollections() {
   else failures.push(`categorías: ${errorMessage(categoryResult.reason)}`)
   if (methodResult.status === 'fulfilled') paymentMethods.value = methodResult.value
   else failures.push(`métodos de pago: ${errorMessage(methodResult.reason)}`)
+  if (narrativeResult.status === 'fulfilled') narrativeReport.value = narrativeResult.value
+  else failures.push(`resumen narrativo: ${errorMessage(narrativeResult.reason)}`)
+
   dataError.value = failures.length ? `No se pudieron cargar ${failures.join(' · ')}.` : ''
 }
 
@@ -215,9 +226,17 @@ onMounted(async () => {
           <X :size="15" aria-hidden="true" />
         </button></div>
 
-      <OverviewView v-if="activeSection === 'overview'" :expenses="expenses" :categories="categories"
-        :payment-methods="paymentMethods" :user-name="user.fullName.split(' ')[0]" :loading="busy"
-        @go-to-expenses="activeSection = 'expenses'" @add-expense="activeSection = 'expenses'" />
+      <OverviewView
+        v-if="activeSection === 'overview'"
+        :expenses="expenses"
+        :categories="categories"
+        :payment-methods="paymentMethods"
+        :narrative="narrativeReport"
+        :user-name="user.fullName.split(' ')[0]"
+        :loading="busy"
+        @go-to-expenses="activeSection = 'expenses'"
+        @add-expense="activeSection = 'expenses'"
+      />
       <ExpensesView v-else-if="activeSection === 'expenses'" :expenses="expenses" :categories="categories"
         :payment-methods="paymentMethods" :loading="busy" :busy="busy" :success-version="successVersion"
         @save="saveExpense" @remove="removeExpense" @go-to-settings="activeSection = 'settings'" />
